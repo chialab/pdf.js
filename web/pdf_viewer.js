@@ -128,6 +128,8 @@ function isValidAnnotationEditorMode(mode) {
  *   rendering. The default value is `false`.
  * @property {boolean} [supportsPinchToZoom] - Enable zooming on pinch gesture.
  *   The default value is `true`.
+ * @property {boolean} [enableAutoLinking] - Enable creation of hyperlinks from
+ *   text that look like URLs. The default value is `false`.
  */
 
 class PDFPageViewBuffer {
@@ -228,6 +230,8 @@ class PDFViewer {
 
   #enableNewAltTextWhenAddingImage = false;
 
+  #enableAutoLinking = false;
+
   #eventAbortController = null;
 
   #mlManager = null;
@@ -249,6 +253,8 @@ class PDFViewer {
   #scrollModePageState = null;
 
   #scaleTimeoutId = null;
+
+  #signatureManager = null;
 
   #supportsPinchToZoom = true;
 
@@ -287,6 +293,7 @@ class PDFViewer {
     this.downloadManager = options.downloadManager || null;
     this.findController = options.findController || null;
     this.#altTextManager = options.altTextManager || null;
+    this.#signatureManager = options.signatureManager || null;
     this.#editorUndoBar = options.editorUndoBar || null;
 
     if (this.findController) {
@@ -321,6 +328,7 @@ class PDFViewer {
     this.#mlManager = options.mlManager || null;
     this.#enableHWA = options.enableHWA || false;
     this.#supportsPinchToZoom = options.supportsPinchToZoom !== false;
+    this.#enableAutoLinking = options.enableAutoLinking || false;
 
     this.defaultRenderingQueue = !options.renderingQueue;
     if (
@@ -908,6 +916,7 @@ class PDFViewer {
               this.container,
               viewer,
               this.#altTextManager,
+              this.#signatureManager,
               eventBus,
               pdfDocument,
               pageColors,
@@ -990,6 +999,7 @@ class PDFViewer {
             l10n: this.l10n,
             layerProperties: this._layerProperties,
             enableHWA: this.#enableHWA,
+            enableAutoLinking: this.#enableAutoLinking,
           });
           this._pages.push(pageView);
         }
@@ -2339,11 +2349,22 @@ class PDFViewer {
       this.#mlManager?.loadModel("altText");
     }
 
-    const { eventBus } = this;
-    const updater = () => {
+    const { eventBus, pdfDocument } = this;
+    const updater = async () => {
       this.#cleanupSwitchAnnotationEditorMode();
       this.#annotationEditorMode = mode;
-      this.#annotationEditorUIManager.updateMode(mode, editId, isFromKeyboard);
+      await this.#annotationEditorUIManager.updateMode(
+        mode,
+        editId,
+        isFromKeyboard
+      );
+      if (
+        mode !== this.#annotationEditorMode ||
+        pdfDocument !== this.pdfDocument
+      ) {
+        // Since `updateMode` is async, the active mode could have changed.
+        return;
+      }
       eventBus.dispatch("annotationeditormodechanged", {
         source: this,
         mode,

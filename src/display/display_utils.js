@@ -213,8 +213,7 @@ class PageViewport {
    * @type {Object}
    */
   get rawDims() {
-    const { userUnit, viewBox } = this;
-    const dims = viewBox.map(x => x * userUnit);
+    const dims = this.viewBox;
 
     return shadow(this, "rawDims", {
       pageWidth: dims[2] - dims[0],
@@ -597,13 +596,13 @@ function setLayerDimensions(
     const { style } = div;
     const useRound = FeatureTest.isCSSRoundSupported;
 
-    const w = `var(--scale-factor) * ${pageWidth}px`,
-      h = `var(--scale-factor) * ${pageHeight}px`;
+    const w = `var(--total-scale-factor) * ${pageWidth}px`,
+      h = `var(--total-scale-factor) * ${pageHeight}px`;
     const widthStr = useRound
-        ? `round(down, ${w}, var(--scale-round-x, 1px))`
+        ? `round(down, ${w}, var(--scale-round-x))`
         : `calc(${w})`,
       heightStr = useRound
-        ? `round(down, ${h}, var(--scale-round-y, 1px))`
+        ? `round(down, ${h}, var(--scale-round-y))`
         : `calc(${h})`;
 
     if (!mustFlip || viewport.rotation % 180 === 0) {
@@ -650,6 +649,20 @@ class OutputScale {
   }
 }
 
+// See https://developer.mozilla.org/en-US/docs/Web/Media/Formats/Image_types
+// to know which types are supported by the browser.
+const SupportedImageMimeTypes = [
+  "image/apng",
+  "image/avif",
+  "image/bmp",
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/svg+xml",
+  "image/webp",
+  "image/x-icon",
+];
+
 export {
   deprecated,
   fetchData,
@@ -672,5 +685,6 @@ export {
   setLayerDimensions,
   StatTimer,
   stopEvent,
+  SupportedImageMimeTypes,
   SVG_NS,
 };

@@ -195,6 +195,11 @@ const defaultOptions = {
     value: true,
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE + OptionKind.EVENT_DISPATCH,
   },
+  enableAutoLinking: {
+    /** @type {boolean} */
+    value: typeof PDFJSDev === "undefined" || PDFJSDev.test("MOZCENTRAL"),
+    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+  },
   enableGuessAltText: {
     /** @type {boolean} */
     value: true,
@@ -226,6 +231,11 @@ const defaultOptions = {
   enableScripting: {
     /** @type {boolean} */
     value: typeof PDFJSDev === "undefined" || !PDFJSDev.test("CHROME"),
+    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+  },
+  enableSignatureEditor: {
+    /** @type {boolean} */
+    value: typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING"),
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
   enableUpdatedAddImage: {
@@ -429,6 +439,14 @@ const defaultOptions = {
   verbosity: {
     /** @type {number} */
     value: 1,
+    kind: OptionKind.API,
+  },
+  wasmUrl: {
+    /** @type {string} */
+    value:
+      typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")
+        ? "resource://pdf.js/web/wasm/"
+        : "../web/wasm/",
     kind: OptionKind.API,
   },
 

@@ -16,7 +16,7 @@
 import { AbortException, assert, warn } from "../shared/util.js";
 import {
   createHeaders,
-  createResponseStatusError,
+  createResponseError,
   extractFilenameFromHeader,
   getResponseOrigin,
   validateRangeRequestCapabilities,
@@ -132,7 +132,7 @@ class PDFFetchStreamReader {
         stream._responseOrigin = getResponseOrigin(response.url);
 
         if (!validateResponseStatus(response.status)) {
-          throw createResponseStatusError(response.status, url);
+          throw createResponseError(response.status, url);
         }
         this._reader = response.body.getReader();
         this._headersCapability.resolve();
@@ -240,7 +240,7 @@ class PDFFetchStreamRangeReader {
           );
         }
         if (!validateResponseStatus(response.status)) {
-          throw createResponseStatusError(response.status, url);
+          throw createResponseError(response.status, url);
         }
         this._readCapability.resolve();
         this._reader = response.body.getReader();

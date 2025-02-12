@@ -43,6 +43,7 @@ import {
 import { AnnotationEditorLayerBuilder } from "./annotation_editor_layer_builder.js";
 import { AnnotationLayerBuilder } from "./annotation_layer_builder.js";
 import { AppOptions } from "./app_options.js";
+import { Autolinker } from "./autolinker.js";
 import { DrawLayerBuilder } from "./draw_layer_builder.js";
 import { GenericL10n } from "web-null_l10n";
 import { SimpleLinkService } from "./pdf_link_service.js";
@@ -84,6 +85,8 @@ import { XfaLayerBuilder } from "./xfa_layer_builder.js";
  *   the necessary layer-properties.
  * @property {boolean} [enableHWA] - Enables hardware acceleration for
  *   rendering. The default value is `false`.
+ * @property {boolean} [enableAutoLinking] - Enable creation of hyperlinks from
+ *   text that look like URLs. The default value is `false`.
  */
 
 const DEFAULT_LAYER_PROPERTIES =
@@ -120,6 +123,8 @@ class PDFPageView {
 
   #enableHWA = false;
 
+  #enableAutoLinking = false;
+
   #hasRestrictedScaling = false;
 
   #isEditing = false;
@@ -141,6 +146,8 @@ class PDFPageView {
   #renderingState = RenderingStates.INITIAL;
 
   #textLayerMode = TextLayerMode.ENABLE;
+
+  #userUnit = 1;
 
   #useThumbnailCanvas = {
     directDrawing: true,
@@ -177,6 +184,7 @@ class PDFPageView {
       options.maxCanvasPixels ?? AppOptions.get("maxCanvasPixels");
     this.pageColors = options.pageColors || null;
     this.#enableHWA = options.enableHWA || false;
+    this.#enableAutoLinking = options.enableAutoLinking || false;
 
     this.eventBus = options.eventBus;
     this.renderingQueue = options.renderingQueue;
@@ -308,7 +316,16 @@ class PDFPageView {
   }
 
   #setDimensions() {
-    const { viewport } = this;
+    const { div, viewport } = this;
+
+    if (viewport.userUnit !== this.#userUnit) {
+      if (viewport.userUnit !== 1) {
+        div.style.setProperty("--user-unit", viewport.userUnit);
+      } else {
+        div.style.removeProperty("--user-unit");
+      }
+      this.#userUnit = viewport.userUnit;
+    }
     if (this.pdfPage) {
       if (this.#previousRotation === viewport.rotation) {
         return;
@@ -317,7 +334,7 @@ class PDFPageView {
     }
 
     setLayerDimensions(
-      this.div,
+      div,
       viewport,
       /* mustFlip = */ true,
       /* mustRotate = */ false
@@ -396,11 +413,11 @@ class PDFPageView {
   async #renderAnnotationLayer() {
     let error = null;
     try {
-      await this.annotationLayer.render(
-        this.viewport,
-        { structTreeLayer: this.structTreeLayer },
-        "display"
-      );
+      await this.annotationLayer.render({
+        viewport: this.viewport,
+        intent: "display",
+        structTreeLayer: this.structTreeLayer,
+      });
     } catch (ex) {
       console.error("#renderAnnotationLayer:", ex);
       error = ex;
@@ -412,7 +429,10 @@ class PDFPageView {
   async #renderAnnotationEditorLayer() {
     let error = null;
     try {
-      await this.annotationEditorLayer.render(this.viewport, "display");
+      await this.annotationEditorLayer.render({
+        viewport: this.viewport,
+        intent: "display",
+      });
     } catch (ex) {
       console.error("#renderAnnotationEditorLayer:", ex);
       error = ex;
@@ -423,7 +443,9 @@ class PDFPageView {
 
   async #renderDrawLayer() {
     try {
-      await this.drawLayer.render("display");
+      await this.drawLayer.render({
+        intent: "display",
+      });
     } catch (ex) {
       console.error("#renderDrawLayer:", ex);
     }
@@ -432,7 +454,10 @@ class PDFPageView {
   async #renderXfaLayer() {
     let error = null;
     try {
-      const result = await this.xfaLayer.render(this.viewport, "display");
+      const result = await this.xfaLayer.render({
+        viewport: this.viewport,
+        intent: "display",
+      });
       if (result?.textDivs && this._textHighlighter) {
         // Given that the following method fetches the text asynchronously we
         // can invoke it *before* appending the xfaLayer to the DOM (below),
@@ -461,7 +486,9 @@ class PDFPageView {
 
     let error = null;
     try {
-      await this.textLayer.render(this.viewport);
+      await this.textLayer.render({
+        viewport: this.viewport,
+      });
     } catch (ex) {
       if (ex instanceof AbortException) {
         return;
@@ -588,10 +615,14 @@ class PDFPageView {
   }
 
   toggleEditingMode(isEditing) {
+    // The page can be invisible, consequently there's no annotation layer and
+    // we can't know if there are editable annotations.
+    // So to avoid any issue when the page is rendered the #isEditing flag must
+    // be set.
+    this.#isEditing = isEditing;
     if (!this.hasEditableAnnotations()) {
       return;
     }
-    this.#isEditing = isEditing;
     this.reset({
       keepAnnotationLayer: true,
       keepAnnotationEditorLayer: true,
@@ -1086,10 +1117,24 @@ class PDFPageView {
           viewport.rawDims
         );
 
-        this.#renderTextLayer();
+        const textLayerPromise = this.#renderTextLayer();
 
         if (this.annotationLayer) {
           await this.#renderAnnotationLayer();
+
+          if (this.#enableAutoLinking) {
+            try {
+              await textLayerPromise;
+
+              this.annotationLayer?.injectLinkAnnotations({
+                inferredLinks: Autolinker.processLinks(this),
+                viewport: this.viewport,
+                structTreeLayer: this.structTreeLayer,
+              });
+            } catch (ex) {
+              console.error("enableAutoLinking:", ex);
+            }
+          }
         }
 
         const { annotationEditorUIManager } = this.#layerProperties;
