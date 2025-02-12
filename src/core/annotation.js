@@ -15,6 +15,7 @@
 
 import {
   AnnotationActionEventType,
+  AnnotationBorderEffectType,
   AnnotationBorderStyleType,
   AnnotationEditorType,
   AnnotationFieldFlag,
@@ -45,6 +46,7 @@ import {
   getParentToUpdate,
   getRotationMatrix,
   isNumberArray,
+  lookupLineEnding,
   lookupMatrix,
   lookupNormalRect,
   lookupRect,
@@ -635,6 +637,7 @@ class Annotation {
     this.setModificationDate(dict.get("M"));
     this.setFlags(dict.get("F"));
     this.setRectangle(dict.getArray("Rect"));
+    this.setRectangleDifference(dict.getArray("RD"));
     this.setColor(dict.getArray("C"));
     this.setBorderStyle(dict);
     this.setAppearance(dict);
@@ -956,6 +959,17 @@ class Annotation {
   }
 
   /**
+   * Set the rectangle difference.
+   *
+   * @public
+   * @memberof Annotation
+   * @param {Array} rectangleDifference - The rectangle difference array with
+   */
+  setRectangleDifference(rectangleDifference) {
+    this.rectangleDifference = lookupRect(rectangleDifference, [0, 0, 0, 0]);
+  }
+
+  /**
    * Set the color and take care of color space conversion.
    * The default value is black, in RGB color space.
    *
@@ -970,6 +984,18 @@ class Annotation {
   }
 
   /**
+   * Set the line ending; should only be used with FreeText annotations.
+   * @param {Name} lineEnding - The line ending name.
+   */
+  setLineEnding(lineEnding) {
+    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
+      throw new Error("Not implemented: setLineEnding");
+    }
+
+    this.lineEnding = lookupLineEnding(lineEnding, "None");
+  }
+
+  /**
    * Set the line endings; should only be used with specific annotation types.
    * @param {Array} lineEndings - The line endings array.
    */
@@ -981,26 +1007,7 @@ class Annotation {
 
     if (Array.isArray(lineEndings) && lineEndings.length === 2) {
       for (let i = 0; i < 2; i++) {
-        const obj = lineEndings[i];
-
-        if (obj instanceof Name) {
-          switch (obj.name) {
-            case "None":
-              continue;
-            case "Square":
-            case "Circle":
-            case "Diamond":
-            case "OpenArrow":
-            case "ClosedArrow":
-            case "Butt":
-            case "ROpenArrow":
-            case "RClosedArrow":
-            case "Slash":
-              this.lineEndings[i] = obj.name;
-              continue;
-          }
-        }
-        warn(`Ignoring invalid lineEnding: ${obj}`);
+        this.lineEndings[i] = lookupLineEnding(lineEndings[i], "None");
       }
     }
   }
@@ -1083,6 +1090,19 @@ class Annotation {
       // specification and instead draws no border at all, so we do the same.
       // See also https://github.com/mozilla/pdf.js/issues/6179.
       this.borderStyle.setWidth(0);
+    }
+    if (borderStyle.has("BE")) {
+      const dict = borderStyle.get("BE");
+      if (dict instanceof Dict) {
+        const effect = dict.get("S");
+        if (effect instanceof Name) {
+          this.borderStyle.setEffect(effect);
+          const intensity = dict.get("I");
+          if (typeof intensity === "number") {
+            this.borderStyle.setEffectIntensity(intensity);
+          }
+        }
+      }
     }
   }
 
@@ -1509,6 +1529,41 @@ class AnnotationBorderStyle {
   }
 
   /**
+   * Set the border effect.
+   *
+   * @public
+   * @memberof AnnotationBorderStyle
+   * @param {Name} effect - The annotation effect.
+   * @see {@link shared/util.js}
+   */
+  setEffect(effect) {
+    if (!(effect instanceof Name)) {
+      return;
+    }
+    switch (effect.name) {
+      case "C":
+        this.effect = AnnotationBorderEffectType.CLOUD;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Set the effect intensity.
+   *
+   * @public
+   * @memberof AnnotationBorderStyle
+   * @param {number} intensity - The intensity of the effect.
+   */
+  setEffectIntensity(intensity) {
+    if (typeof intensity !== "number" || !Number.isInteger(intensity)) {
+      return;
+    }
+    this.effectIntensity = intensity;
+  }
+
+  /**
    * Set the dash array.
    *
    * @public
@@ -1744,6 +1799,7 @@ class MarkupAnnotation extends Annotation {
     appearanceDict.set("Resources", resources);
     const bbox = (this.data.rect = [minX, minY, maxX, maxY]);
     appearanceDict.set("BBox", bbox);
+    this.data.rectangleDifference = this.rectangleDifference;
 
     this.appearance = new StringStream("/GS0 gs /Fm0 Do");
     this.appearance.dict = appearanceDict;
@@ -3815,6 +3871,7 @@ class PopupAnnotation extends Annotation {
       this.data.rect[1] === this.data.rect[3]
     ) {
       this.data.rect = null;
+      this.data.rectDifference = null;
     }
 
     let parentItem = dict.get("Parent");
@@ -3882,10 +3939,22 @@ class FreeTextAnnotation extends MarkupAnnotation {
     // We want to be able to add mouse listeners to the annotation.
     this.data.noHTML = false;
 
-    const { evaluatorOptions, xref } = params;
+    const { evaluatorOptions, xref, dict } = params;
     this.data.annotationType = AnnotationType.FREETEXT;
     this.setDefaultAppearance(params);
     this._hasAppearance = !!this.appearance;
+
+    if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
+      if (this.data.it === "FreeTextCallout") {
+        this.setLineEnding(dict.get("LE"));
+        this.data.lineEnding = this.lineEnding;
+
+        const calloutLine = dict.getArray("CL");
+        if (isNumberArray(calloutLine, 4) || isNumberArray(calloutLine, 6)) {
+          this.data.calloutLine = calloutLine;
+        }
+      }
+    }
 
     if (this._hasAppearance) {
       const { fontColor, fontSize } = parseAppearanceStream(
@@ -3934,8 +4003,17 @@ class FreeTextAnnotation extends MarkupAnnotation {
   }
 
   static createNewDict(annotation, xref, { apRef, ap }) {
-    const { color, fontSize, oldAnnotation, rect, rotation, user, value } =
-      annotation;
+    const {
+      calloutLine,
+      color,
+      fontSize,
+      lineEnding,
+      oldAnnotation,
+      rect,
+      rotation,
+      user,
+      value,
+    } = annotation;
     const freetext = oldAnnotation || new Dict(xref);
     freetext.set("Type", Name.get("Annot"));
     freetext.set("Subtype", Name.get("FreeText"));
@@ -3954,6 +4032,15 @@ class FreeTextAnnotation extends MarkupAnnotation {
     freetext.set("F", 4);
     freetext.set("Border", [0, 0, 0]);
     freetext.set("Rotate", rotation);
+
+    if (calloutLine) {
+      freetext.set("IT", Name.get("FreeTextCallout"));
+
+      freetext.set("CL", calloutLine);
+      if (lineEnding) {
+        freetext.set("LE", Name.get(lineEnding));
+      }
+    }
 
     if (user) {
       freetext.set("T", stringToAsciiOrUTF16BE(user));
@@ -4178,6 +4265,28 @@ class SquareAnnotation extends MarkupAnnotation {
     this.data.annotationType = AnnotationType.SQUARE;
     this.data.hasOwnCanvas = this.data.noRotate;
     this.data.noHTML = false;
+
+    this.data.vertices = [
+      this.rectangle[0],
+      this.rectangle[1],
+      this.rectangle[2],
+      this.rectangle[1],
+      this.rectangle[2],
+      this.rectangle[3],
+      this.rectangle[0],
+      this.rectangle[3],
+    ];
+    if (dict.has("RD")) {
+      const rectDifference = dict.getArray("RD");
+      this.data.vertices[0] += rectDifference[0];
+      this.data.vertices[1] += rectDifference[1];
+      this.data.vertices[2] -= rectDifference[2];
+      this.data.vertices[3] += rectDifference[1];
+      this.data.vertices[4] -= rectDifference[2];
+      this.data.vertices[5] -= rectDifference[3];
+      this.data.vertices[6] += rectDifference[0];
+      this.data.vertices[7] -= rectDifference[3];
+    }
 
     if (!this.appearance) {
       // The default stroke color is black.
