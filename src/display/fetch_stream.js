@@ -117,7 +117,6 @@ class PDFFetchStreamReader {
     this._isRangeSupported = !source.disableRange;
     // Always create a copy of the headers.
     const headers = new Headers(stream.headers);
-    headers.set("Range", "bytes=0-1");
 
     const url = source.url;
     fetch(
